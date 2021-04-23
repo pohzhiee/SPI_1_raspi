@@ -6,8 +6,7 @@ set(CMAKE_CXX_FLAGS "-fpermissive")
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-add_executable(main1 main.cpp pigpio.c command.c)
-target_link_libraries(main1 Threads::Threads)
 add_executable(main2 main2.cpp)
+target_link_libraries(main2 Threads::Threads)
 
 
