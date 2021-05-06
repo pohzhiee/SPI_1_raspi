@@ -165,6 +165,50 @@ void transmitSPI(SPI* spiPtr, uint8_t* bufPtr, uint32_t len, uint32_t spiDefault
     }
 }
 
+void
+transmitSPIThreaded(SPI* spi0Ptr, SPI* spi3Ptr, GPIO* gpio_ptr, uint8_t* data1, uint8_t* data2, uint32_t spi_cs_defaults, uint32_t count)
+{
+    // always transmits at 1khz
+    std::thread thread1(transmitSPI, spi0Ptr, (uint8_t*)data1, 20, spi_cs_defaults);
+    std::thread thread2(transmitSPI, spi3Ptr, (uint8_t*)data2, 20, spi_cs_defaults);
+    auto next = std::chrono::steady_clock::now()+duration<long, std::ratio<1, 1000>>{1};
+    for (int i = 0; i<count; i++) {
+        std::this_thread::sleep_until(next);
+        if (i%2==0) {
+            gpio_ptr->GPSET0 |= (0b1 << 14 | 0b1 << 15);
+        }
+        else {
+            gpio_ptr->GPCLR0 |= (0b1 << 14 | 0b1 << 15);
+        }
+        cv.notify_all();
+        next = next+duration<long, std::ratio<1, 1000>>{1};
+    }
+    isDone = true;
+    thread1.join();
+    thread2.join();
+}
+void transmitSPIInterleaved(SPI* spi0Ptr, SPI* spi3Ptr, GPIO* gpio_ptr, uint8_t* data1, uint8_t* data2, uint32_t spi_cs_defaults,
+        uint32_t count)
+{
+    std::array<SPITransferInput, 2> xferInput = {
+            SPITransferInput{spi0Ptr, (uint8_t*)data1, 20, spi_cs_defaults},
+            SPITransferInput{spi3Ptr, (uint8_t*)data2, 20, spi_cs_defaults}
+    };
+
+    auto next = std::chrono::steady_clock::now()+duration<long, std::ratio<1, 1000>>{1};
+    for (int i = 0; i<count; i++) {
+        std::this_thread::sleep_until(next);
+        if (i%2==0) {
+            gpio_ptr->GPSET0 |= (0b1 << 14 | 0b1 << 15);
+        }
+        else {
+            gpio_ptr->GPCLR0 |= (0b1 << 14 | 0b1 << 15);
+        }
+        transmitSPI2(xferInput);
+        next = next+duration<long, std::ratio<1, 1000>>{1};
+    }
+}
+
 int main(int argc, char** argv)
 {
     int fd;
@@ -232,39 +276,25 @@ int main(int argc, char** argv)
     SPI* spi3Ptr = reinterpret_cast<SPI*>(spi3memPtr);
     // set 0b11 on FIFO clear, rest of the settings use default
     // CS0, CPOL=low, CPHA=middle of bit, CS_POLARITY=active low,
-    uint32_t spiDefaults = 0b11 << 4;
+    uint32_t spi_cs_defaults = 0b11 << 4;
 
     // Set SPI0
     {
         spi0Ptr->DLEN = 2;/* undocumented, stops inter-byte gap */
-        spi0Ptr->CS = spiDefaults;
+        spi0Ptr->CS = spi_cs_defaults;
         spi0Ptr->CLK = 100;
     }
     // Set SPI3
     {
         spi3Ptr->DLEN = 2;/* undocumented, stops inter-byte gap */
-        spi3Ptr->CS = spiDefaults;
+        spi3Ptr->CS = spi_cs_defaults;
         spi3Ptr->CLK = 100;
     }
     char data1[] = "ABCDEFGHIJKLMNOPQRSTU";
     char data2[] = "0123456789abcdefghijkl";
-    std::array<SPITransferInput, 2> xferInput = {
-            SPITransferInput{spi0Ptr, (uint8_t*)data1, 20, spiDefaults},
-            SPITransferInput{spi3Ptr, (uint8_t*)data2, 20, spiDefaults}
-    };
-//    transmitSPI2(xferInput);
-    auto next = std::chrono::steady_clock::now();
-    for (int i = 0; i<1000; i++) {
-        std::this_thread::sleep_until(next);
-        if(i%2 == 0){
-            gpio_ptr->GPSET0 |= (0b1 << 14 | 0b1 << 15);
-        }
-        else{
-            gpio_ptr->GPCLR0 |= (0b1 << 14 | 0b1 << 15);
-        }
-        transmitSPI2(xferInput);
-        next = next+duration<long, std::ratio<1, 1000>>{1};
-    }
+
+//    transmitSPIThreaded(spi0Ptr, spi3Ptr, gpio_ptr, (uint8_t*)data1, (uint8_t*)data2, spi_cs_defaults, 1000);
+    transmitSPIInterleaved(spi0Ptr, spi3Ptr, gpio_ptr, (uint8_t*)data1, (uint8_t*)data2, spi_cs_defaults, 1000);
 
     return 0;
 }
